@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { pageDiagnostics } from '@nuxt/kit/internal'
 import { augmentAndResolve, normalizeRoutes } from '../src/pages/utils.ts'
 import type { Nuxt, NuxtPage } from '../schema.ts'
 
@@ -196,5 +197,81 @@ describe('page meta through i18n-shaped route localization', () => {
     const deferredRoutes = generate(deferred)
     expect(deferredRoutes).toContain('Meta || {}')
     expect(deferredRoutes).not.toContain('"title"')
+  })
+})
+
+describe('duplicate route names', () => {
+  const firstPage = '/app/pages/first.vue'
+  const secondPage = '/app/pages/second.vue'
+  const reportPage = `<script setup>definePageMeta({ name: 'report' })</script>`
+
+  let duplicateName: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    duplicateName = vi.spyOn(pageDiagnostics, 'NUXT_B4028').mockReturnValue(undefined as never)
+  })
+  afterEach(() => {
+    duplicateName.mockRestore()
+  })
+
+  it('should warn when two pages set the same name in `definePageMeta`', async () => {
+    const nuxt = createNuxt({ vfs: { [firstPage]: reportPage, [secondPage]: reportPage } })
+
+    await resolve(nuxt, [
+      { name: 'first', path: '/first', file: firstPage },
+      { name: 'second', path: '/second', file: secondPage },
+    ])
+
+    expect(duplicateName).toHaveBeenCalledTimes(1)
+    expect(duplicateName).toHaveBeenCalledWith({ name: 'report', file: expect.stringContaining('pages/second.vue'), existingFile: expect.stringContaining('pages/first.vue') })
+  })
+
+  it('should warn when a nested page reuses a name set elsewhere', async () => {
+    const childPage = '/app/pages/parent/child.vue'
+    const nuxt = createNuxt({ vfs: { [firstPage]: reportPage, [childPage]: reportPage, '/app/pages/parent.vue': '' } })
+
+    await resolve(nuxt, [
+      { name: 'first', path: '/first', file: firstPage },
+      { name: 'parent', path: '/parent', file: '/app/pages/parent.vue', children: [{ name: 'parent-child', path: 'child', file: childPage }] },
+    ])
+
+    expect(duplicateName).toHaveBeenCalledWith({ name: 'report', file: expect.stringContaining('pages/parent/child.vue'), existingFile: expect.stringContaining('pages/first.vue') })
+  })
+
+  it('should warn when a route added in `pages:extend` reuses a page name', async () => {
+    const nuxt = createNuxt({ vfs: { [firstPage]: reportPage }, scanPageMeta: true })
+    nuxt.hook('pages:extend', (pages: NuxtPage[]) => {
+      pages.push({ name: 'report', path: '/extended' })
+    })
+
+    await resolve(nuxt, [{ name: 'first', path: '/first', file: firstPage }])
+
+    expect(duplicateName).toHaveBeenCalledWith({ name: 'report', file: '/extended', existingFile: expect.stringContaining('pages/first.vue') })
+  })
+
+  it('should not warn for unique names', async () => {
+    const nuxt = createNuxt({
+      vfs: {
+        [firstPage]: `<script setup>definePageMeta({ name: 'report-first' })</script>`,
+        [secondPage]: `<script setup>definePageMeta({ name: 'report-second' })</script>`,
+      },
+    })
+
+    await resolve(nuxt, [
+      { name: 'first', path: '/first', file: firstPage },
+      { name: 'second', path: '/second', file: secondPage },
+    ])
+
+    expect(duplicateName).not.toHaveBeenCalled()
+  })
+
+  it('should not warn again for names generated from file paths, which are reported when the routes are emitted', async () => {
+    const nuxt = createNuxt({ vfs: { [firstPage]: '', [secondPage]: '' } })
+
+    await resolve(nuxt, [
+      { name: 'same', path: '/first', file: firstPage },
+      { name: 'same', path: '/second', file: secondPage },
+    ])
+
+    expect(duplicateName).not.toHaveBeenCalled()
   })
 })

@@ -138,6 +138,9 @@ export async function augmentAndResolve (pages: NuxtPage[], trackedFiles: Set<st
     return pages
   }
 
+  // Names generated from file paths are already checked for collisions when the routes are
+  // emitted, so remember them to only report collisions introduced by `definePageMeta`/hooks.
+  const generatedNames = collectRouteNames(pages)
   const extraPageMetaExtractionKeys = nuxt.options?.experimental?.extraPageMetaExtractionKeys || []
 
   const augmentCtx = {
@@ -160,9 +163,47 @@ export async function augmentAndResolve (pages: NuxtPage[], trackedFiles: Set<st
     augmentedPages?.clear()
   }
 
+  warnDuplicateRouteNames(pages, generatedNames)
+
   await nuxt.callHook('pages:resolved', pages)
 
   return pages
+}
+
+function collectRouteNames (routes: NuxtPage[], names = new WeakMap<NuxtPage, string | undefined>()) {
+  for (const route of routes) {
+    names.set(route, route.name)
+    if (route.children?.length) {
+      collectRouteNames(route.children, names)
+    }
+  }
+  return names
+}
+
+/**
+ * Vue Router keeps a single route per name, so when two pages end up with the same name
+ * (for example by both setting it in `definePageMeta`), only the last one can be matched.
+ */
+export function warnDuplicateRouteNames (routes: NuxtPage[], generatedNames?: WeakMap<NuxtPage, string | undefined>, seen = new Map<string, NuxtPage>()) {
+  for (const route of routes) {
+    if (route.name) {
+      const existing = seen.get(route.name)
+      if (existing) {
+        const isGenerated = (page: NuxtPage) => !!page.file && generatedNames?.has(page) && generatedNames.get(page) === page.name
+        if (!isGenerated(existing) || !isGenerated(route)) {
+          pageDiagnostics.NUXT_B4028({
+            name: route.name,
+            file: route.file ? linkToAlias(route.file) : route.path,
+            existingFile: existing.file ? linkToAlias(existing.file) : existing.path,
+          })
+        }
+      }
+      seen.set(route.name, route)
+    }
+    if (route.children?.length) {
+      warnDuplicateRouteNames(route.children, generatedNames, seen)
+    }
+  }
 }
 
 interface AugmentPagesContext {

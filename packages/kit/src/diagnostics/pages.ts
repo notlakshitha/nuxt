@@ -145,5 +145,10 @@ export const pageDiagnostics = /* #__PURE__ */ defineDiagnostics({
       fix: 'Keep one of them and replace the others with named parameters, for example `/:post/comments/**` instead of `/*/comments/**`. A single `*` now matches any number of segments.',
       docs: false,
     },
+    NUXT_B4028: {
+      why: (p: { name: string, file: string, existingFile: string }) => `The route name \`${p.name}\` is used by both \`${p.existingFile}\` and \`${p.file}\`. Vue Router keeps only one route per name, so \`${p.existingFile}\` cannot be matched.`,
+      fix: 'Give each page a unique `name` in `definePageMeta`, or remove the custom `name` from one of them.',
+      docs: false,
+    },
   },
 })
